@@ -14,7 +14,8 @@ Type `$` and an amount. Results show as you type, with the country's flag on eac
 | `$2 emami`, `$1 gram`, `$1 ounce irt`, `$0.01 btc` | gold coins and gold, from bonbast |
 | `$1.5k aed`, `$2m tmn` | `k` and `m` suffixes |
 | `$100 yen`, `$100 dirham`, `$100 usd as eur` | currency names work as well as codes |
-| `$100 tu`, `$100 try to e` | half-typed currency: pick from a list, ⇥ completes it |
+| `$100 tr`, `$100 try to e` | half-typed currency: converts with the best match at once, other matches below, ⇥ completes |
+| `$100 turkiye`, `$50 oman`, `$100 dubai` | country names |
 
 - ↩ copies the number. ⌘↩ pastes it into the front app.
 - `irt`, `toman`, `tmn` mean Toman; `irr`, `rial` mean Rial. `tl`, `lira`, `dollar`, `euro`, `pound`, `dirham` work as names.
@@ -24,15 +25,17 @@ Type `$` and an amount. Results show as you type, with the country's flag on eac
 
 Any currency can be typed by name instead of code: `$100 yen` (JPY), `$100 baht`, `$100 krona`, `$100 pounds`. A name matches a whole word of the currency's name, or the start of a word from 3 letters (`$100 japan`, `$100 swiss`). Plurals work (`yens`, `pesos`). The subtitle shows the full name, for example "100 TRY (Turkish Lira) = 2.03 USD".
 
-Words shared by several currencies go to the usual one: `dirham` is AED, `dollar` USD, `pound` GBP, `franc` CHF, `rupee` INR, `peso` MXN, `krona` SEK. Other shared words, such as `dinar`, and half-typed ones list the candidates instead of guessing.
+Words shared by several currencies go to the usual one: `dirham` is AED, `dollar` USD, `pound` GBP, `franc` CHF, `rupee` INR, `peso` MXN, `krona` SEK.
 
-When the last word is unfinished or ambiguous, rows show `CODE — Name` (up to 15). Press ⇥ on a row to put its code into the query and keep typing:
+Country names work too, in English and Persian: `turkey`, `turkiye`, `türkiye`, `iran`, `uae`, `dubai`, `oman`, `iraq`, `uk`, `japan`, `ترکیه`, `امارات`, `عمان` and about 40 more. `us` is left out because it is an ordinary English word.
 
-- `$100 tu` lists TRY, TMT, TND, TVD. ⇥ on TRY gives `$100 TRY `.
-- `$100 try to e` lists EUR, EGP, EMAMI, ERN, ETB and more. ⇥ on EUR gives `$100 try to EUR `.
-- A complete code, alias or single name (`try`, `tl`, `yen`) shows the conversion straight away.
+When the last word is unfinished or shared, the conversion uses the best match straight away (codes first, then popular currencies), and the other matches follow as `CODE — Name` rows (up to 15). ⇥ completes the code in the case you typed:
 
-Like lowercase codes, names are ignored when the text already has a currency symbol or a capitalised code, so selected prose such as "Only $5, real deal" is not read as currency names. After the `$` keyword, `$100 try yen` works; `$100 TRY yen` ignores `yen`, so write codes and names in lowercase when you mix them.
+- `$100 tr` converts TRY. TTD is listed below it. ⇥ gives `$100 try `.
+- `$100 try to e` converts to EUR. EGP, EMAMI, ERN and more are listed below.
+- `$100 dinar` converts BHD and lists the other dinars.
+
+Like lowercase codes, names are ignored when the text already has a currency symbol or a capitalised code, so selected prose such as "Only $5, real deal" is not read as currency names. A connector word (`to`, `in`, `as`, `=`) lifts that for capitalised codes: `$100 try to EUR` converts TRY to EUR. Without one, `$100 TRY yen` ignores `yen`, so write codes in lowercase when you mix them.
 
 ## Convert selected text
 

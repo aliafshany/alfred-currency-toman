@@ -46,10 +46,22 @@ ALIASES = {
     "coin": "EMAMI", "sekke": "EMAMI", "nim": "HALF", "rob": "QUARTER", "gold": "GRAM",
     "tala": "GRAM", "grams": "GRAM", "18k": "GRAM", "mesghal": "MITHQAL", "mesqal": "MITHQAL",
     "oz": "OUNCE", "xau": "OUNCE", "bitcoin": "BTC",
+    # Country names. "us" is left out on purpose: it is an ordinary English word.
+    "turkey": "TRY", "turkiye": "TRY", "türkiye": "TRY", "iran": "IRT", "america": "USD",
+    "usa": "USD", "uae": "AED", "emirates": "AED", "dubai": "AED", "oman": "OMR",
+    "europe": "EUR", "uk": "GBP", "britain": "GBP", "england": "GBP", "japan": "JPY",
+    "china": "CNY", "russia": "RUB", "iraq": "IQD", "afghanistan": "AFN", "armenia": "AMD",
+    "georgia": "GEL", "azerbaijan": "AZN", "saudi": "SAR", "qatar": "QAR", "kuwait": "KWD",
+    "bahrain": "BHD", "india": "INR", "pakistan": "PKR", "canada": "CAD", "australia": "AUD",
+    "switzerland": "CHF", "sweden": "SEK", "norway": "NOK", "denmark": "DKK", "korea": "KRW",
+    "thailand": "THB", "malaysia": "MYR", "indonesia": "IDR", "egypt": "EGP", "brazil": "BRL",
+    "mexico": "MXN",
 }
 SYMBOLS = {"₺": "TRY", "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₽": "RUB", "﷼": "IRR",
            "تومان": "IRT", "تومن": "IRT", "ریال": "IRR", "دلار": "USD", "یورو": "EUR",
-           "لیر": "TRY", "لیره": "TRY", "درهم": "AED", "پوند": "GBP"}
+           "لیر": "TRY", "لیره": "TRY", "درهم": "AED", "پوند": "GBP",
+           "ترکیه": "TRY", "امارات": "AED", "دبی": "AED", "عمان": "OMR", "روبل": "RUB",
+           "یوان": "CNY", "دینار": "IQD", "عراق": "IQD"}
 MULTIPLIERS = {"k": 1e3, "m": 1e6, "هزار": 1e3, "میلیون": 1e6, "میلیارد": 1e9}
 LABEL = {"IRT": "Toman", "IRR": "Rial", **{c: v[1] for c, v in COINS.items()}}
 # Currency names: taken from Alfred's official Currency Converter workflow
@@ -502,7 +514,7 @@ def safe_eval(expr):
 
 
 # A number ends on a digit, so a trailing "." or "," stays out of the token.
-TOKEN = re.compile(r"(?P<num>\d(?:[\d.,]*\d)?)|(?P<word>[A-Za-z]+|[؀-ۿ]+)|(?P<sym>[₺$€£¥₽﷼])|(?P<op>[-+*/×÷^()])")
+TOKEN = re.compile(r"(?P<num>\d(?:[\d.,]*\d)?)|(?P<word>[A-Za-zÀ-ÖØ-öø-ɏ]+|[؀-ۿ]+)|(?P<sym>[₺$€£¥₽﷼])|(?P<op>[-+*/×÷^()])")
 
 
 def plain_text(text):
@@ -584,12 +596,17 @@ def parse(q, known):
     """Return (amount, [codes], unknown, expression shown, bad expression or None)."""
     q = q.translate(DIGITS)
     matches = list(TOKEN.finditer(q))
+    # Strong tokens make bare lowercase codes and names count as prose ("All items ₺1.299").
+    # A connector ("100 try to EUR") shows the words are meant, so then only symbols count.
+    connected = any(m.lastgroup == "word" and m.group().lower() in CONNECTORS for m in matches)
     strong = False
     for match in matches:
         if match.lastgroup == "sym":
             strong = True
-        elif match.lastgroup == "word" and word_class(match.group(), known) in ("symbol", "alias", "upper"):
-            strong = True
+        elif match.lastgroup == "word":
+            wk = word_class(match.group(), known)
+            if wk == "symbol" or (wk in ("alias", "upper") and not connected):
+                strong = True
     expr, codes, unknown = [], [], []
     typed_math = False
     last_num_end = None
@@ -679,6 +696,8 @@ def pending_word(q, known):
     whole, prefix = name_matches(text, known, 1)
     group = {c: 2 for c in prefix}                       # name starts with the text
     group.update({c: 1 for c in whole})                  # name has it as a whole word
+    group.update({ALIASES[a]: 1 for a in ALIASES         # country or alias starts with it
+                  if len(low) >= 2 and a.startswith(low) and ALIASES[a] in known})
     group.update({c: 0 for c in known if c.lower().startswith(low)})   # code starts with it
     used = set(parse(q[:last.start()], known)[1])
     pool = [c for c in group if c not in used] or list(group)
@@ -738,19 +757,29 @@ def main():
     if bad:
         emit([{"title": f"Invalid expression: {q}", "valid": False}])
         return
+    # An unfinished last word converts with its best match right away ("$100 tr" -> TRY);
+    # the other matches follow the results as Tab rows.
+    complete = None
+    others = []
     pending = pending_word(q, known)
     if pending:
         start, found = pending
-        rows = []
-        for code in found:
-            row = {"title": f"{code} — {CURRENCY_NAMES.get(code, code)}", "valid": False,
-                   "subtitle": f"Tab to use {code}", "autocomplete": f"{q[:start]}{code} "}
+        # Fill in the case that was typed: an upper-case code would outrank "try" in "100 try eur".
+        cased = (lambda c: c.lower()) if q[start:].islower() else (lambda c: c)
+        for code in found[1:]:
+            row = {"title": f"{code} — {CURRENCY_NAMES.get(code, LABEL.get(code, code))}",
+                   "valid": False, "subtitle": f"Tab to use {code}",
+                   "autocomplete": f"{q[:start]}{cased(code)} "}
             ic = icon(code, known)
             if ic:
                 row["icon"] = ic
-            rows.append(row)
-        emit(rows)
-        return
+            others.append(row)
+        q = f"{q[:start]}{cased(found[0])}"
+        complete = f"{q} "
+        amount, codes, unknown, shown, bad = parse(q, known)
+        if bad:
+            emit([{"title": f"Invalid expression: {q}", "valid": False}] + others)
+            return
     if unknown and not codes:
         emit([{"title": f"Unknown currency: {', '.join(unknown)}", "valid": False,
                "subtitle": "Use 3-letter codes: USD EUR TRY GBP AED … names like yen, or toman, emami, gram"}])
@@ -853,11 +882,13 @@ def main():
             "text": {"copy": plain, "largetype": f"{fmt_amount(amount, src)} {sname}\n= {fmt(value, tgt)} {name}"},
             "mods": {"cmd": {"arg": plain, "subtitle": "Paste the number into the front app"}},
         }
+        if complete:
+            item["autocomplete"] = complete
         ic = icon(tgt, all_codes)
         if ic:
             item["icon"] = ic
         items.append(item)
-    emit(items)
+    emit(items + others)
 
 
 if __name__ == "__main__":
