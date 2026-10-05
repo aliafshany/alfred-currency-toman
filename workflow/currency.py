@@ -56,13 +56,18 @@ ALIASES = {
     "switzerland": "CHF", "sweden": "SEK", "norway": "NOK", "denmark": "DKK", "korea": "KRW",
     "thailand": "THB", "malaysia": "MYR", "indonesia": "IDR", "egypt": "EGP", "brazil": "BRL",
     "mexico": "MXN",
+    "ruble": "RUB", "rubles": "RUB", "rouble": "RUB", "roubles": "RUB",
+    "kronor": "SEK", "krone": "NOK", "kr": "SEK",
 }
 SYMBOLS = {"₺": "TRY", "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₽": "RUB", "﷼": "IRR",
+           "₹": "INR", "₩": "KRW", "₪": "ILS", "฿": "THB", "₼": "AZN", "Rs": "INR",
+           "سکه": "EMAMI", "طلا": "GRAM", "روپیه": "INR",
            "تومان": "IRT", "تومن": "IRT", "ریال": "IRR", "دلار": "USD", "یورو": "EUR",
            "لیر": "TRY", "لیره": "TRY", "درهم": "AED", "پوند": "GBP",
            "ترکیه": "TRY", "امارات": "AED", "دبی": "AED", "عمان": "OMR", "روبل": "RUB",
            "یوان": "CNY", "دینار": "IQD", "عراق": "IQD"}
-MULTIPLIERS = {"k": 1e3, "m": 1e6, "هزار": 1e3, "میلیون": 1e6, "میلیارد": 1e9}
+MULTIPLIERS = {"k": 1e3, "m": 1e6, "thousand": 1e3, "million": 1e6, "millions": 1e6,
+               "billion": 1e9, "billions": 1e9, "هزار": 1e3, "میلیون": 1e6, "میلیارد": 1e9}
 LABEL = {"IRT": "Toman", "IRR": "Rial", **{c: v[1] for c, v in COINS.items()}}
 # Currency names: taken from Alfred's official Currency Converter workflow
 # (Alfred team, BSD-3-Clause), plus the local items this workflow adds.
@@ -128,32 +133,56 @@ CURRENCY_NAMES = {
 NAME_STOP = {"and", "of", "the"}         # words of a name that never identify it
 # A bare word that several names share goes to the usual currency (dirham -> AED, not MAD).
 PREFERRED = {"dirham": "AED", "dollar": "USD", "pound": "GBP", "franc": "CHF", "rupee": "INR",
-             "peso": "MXN", "krona": "SEK"}
+             "peso": "MXN", "krona": "SEK", "rouble": "RUB", "ruble": "RUB", "dinar": "IQD",
+             "riyal": "SAR", "krone": "NOK"}
 POPULAR = ["USD", "EUR", "GBP", "TRY", "JPY", "CHF", "CAD", "AUD", "CNY", "AED", "INR", "IRT"]
 CONNECTORS = ("to", "in", "as", "=", "به")
 MAX_CANDIDATES = 15
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫٬", "01234567890123456789.,")
 
 
+def codes_of(raw):
+    """'usd, TL,usd' -> ['USD', 'TRY'] (aliases resolved, duplicates dropped)."""
+    return list(dict.fromkeys(ALIASES.get(c.strip().lower(), c.strip().upper())
+                              for c in raw.split(",") if c.strip()))
+
+
 def setting(var, default):
     """Comma-separated currency list from Configure Workflow…"""
-    raw = os.environ.get(var) or default
-    return [ALIASES.get(c.strip().lower(), c.strip().upper()) for c in raw.split(",") if c.strip()]
+    return codes_of(os.environ.get(var) or default)
 
 
-DEFAULT_TARGETS = setting("default_targets", "USD,IRT")
-TOMAN_TARGETS = setting("toman_targets", "USD,TRY")
-COIN_TARGETS = setting("gold_targets", "IRT,USD")
-USD_TARGETS = setting("usd_targets", "IRT,TRY,EUR")
+BUILTIN_TARGETS = {"default_targets": "USD,IRT", "toman_targets": "USD,TRY",
+                   "gold_targets": "IRT,USD", "usd_targets": "IRT,TRY,EUR"}
+TARGETS = {var: setting(var, default) for var, default in BUILTIN_TARGETS.items()}
 SHOW_CHANGE = os.environ.get("show_change", "1") != "0"
 
 
+def default_targets(src, known):
+    """The configured target list for this source; the built-in one if nothing is left."""
+    var = ("usd_targets" if src == "USD" else "toman_targets" if src in TOMAN
+           else "gold_targets" if src in COINS else "default_targets")
+    for choice in (TARGETS[var], codes_of(BUILTIN_TARGETS[var])):
+        found = [t for t in choice if t != src and t in known]
+        if found:
+            return found
+    return []
+
+
 def locks_pending():
-    """True while a refresh or icon render still holds its lock."""
-    for name in ("world", "bonbast", "history"):
-        if os.path.exists(path(name) + ".lock"):
-            return True
-    return os.path.exists(os.path.join(CACHE, "icons.lock"))
+    """True while a refresh or icon render holds a fresh lock; a lock older than 60 s is dead."""
+    pending = False
+    locks = [path(name) + ".lock" for name in ("world", "bonbast", "history")]
+    for lock in locks + [os.path.join(CACHE, "icons.lock")]:
+        if os.path.exists(lock):
+            if marker_fresh(lock, 60):
+                pending = True
+            else:
+                try:
+                    os.remove(lock)
+                except OSError:
+                    pass
+    return pending
 
 
 def emit(items):
@@ -219,7 +248,10 @@ def fetch_world():
     except Exception:
         pass
     d = curl("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json")
-    return {"rates": {k.upper(): v for k, v in d["usd"].items()}, "date": d["date"]}
+    # Keep real currencies only: crypto tickers (SOL, ONE, OKB …) would match ordinary words.
+    rates = {k.upper(): v for k, v in d["usd"].items()
+             if k.upper() in CURRENCY_NAMES or k.upper() in LOCAL}
+    return {"rates": rates, "date": d["date"]}
 
 
 def split_bonbast(raw):
@@ -278,8 +310,14 @@ def fetch_bonbast():
     return {"rates": rates, "coins": coins, "date": iso_now()}
 
 
+def tehran_yesterday():
+    """Yesterday's date in Tehran (UTC+3:30, no daylight saving)."""
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3, minutes=30)
+    return (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
+
 def fetch_history():
-    day = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+    day = tehran_yesterday()
     rates, coins = split_bonbast(run_bonbast("history", "--date", day, "--json"))
     return {"rates": rates, "coins": coins, "date": day, "ts": iso_now()}
 
@@ -302,9 +340,27 @@ def marker_fresh(marker, seconds=60):
         return False
 
 
-def touch(marker):
+def touch(marker, text=""):
     os.makedirs(os.path.dirname(marker), exist_ok=True)
-    open(marker, "w").close()
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def fail_text(exc):
+    """What a failed refresh leaves in its .fail file, so the next keystroke shows the same message."""
+    return str(exc) if isinstance(exc, FileNotFoundError) else type(exc).__name__
+
+
+def fail_message(exc):
+    return str(exc) if isinstance(exc, (FileNotFoundError, RuntimeError)) else type(exc).__name__
+
+
+def read_fail(name):
+    try:
+        with open(fail_path(name), encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
 
 
 def workflow_data():
@@ -408,30 +464,41 @@ def background(*args, lock):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def valid_cache(cached):
+    """A cache file must be {"rates": {...}, "fetched": <number>, ...}; anything else is refetched."""
+    if not isinstance(cached, dict) or not isinstance(cached.get("rates"), dict):
+        return False
+    fetched = cached.get("fetched")
+    return isinstance(fetched, (int, float)) and not isinstance(fetched, bool)
+
+
 def load(name, wait=True):
     """Return (data, very_old). Old data is returned at once and refreshed in the background.
     With wait=False a missing cache returns (None, False) and is fetched in the background."""
+    cached = None
     try:
         with open(path(name), encoding="utf-8") as f:
             cached = json.load(f)
     except (OSError, ValueError):
+        pass
+    if not valid_cache(cached):
         if marker_fresh(fail_path(name)) or marker_fresh(path(name) + ".lock"):
             if not wait:
                 return None, False
-            raise RuntimeError(f"{name} refresh failed")
+            raise RuntimeError(read_fail(name) or f"{name} refresh failed")
         if not wait:
             background("--refresh", name, lock=path(name) + ".lock")
             return None, False
         try:
             return refresh(name), False
-        except Exception:
+        except Exception as exc:
             try:
-                touch(fail_path(name))
+                touch(fail_path(name), fail_text(exc))
             except OSError:
                 pass
             raise
     age = time.time() - cached["fetched"]
-    if age > MAX_AGE[name]:
+    if age > MAX_AGE[name] or (name == "history" and cached.get("date") != tehran_yesterday()):
         background("--refresh", name, lock=path(name) + ".lock")
     return cached, age > 3 * MAX_AGE[name]
 
@@ -443,6 +510,8 @@ def flag(code):
         return "🇮🇷"
     if code in COINS:
         return "🪙"
+    if code == "ANG":                     # Netherlands Antilles: no flag exists
+        return "💱"
     if len(code) == 3 and code.isalpha() and not code.startswith("X"):
         return "".join(chr(0x1F1E6 + ord(ch) - ord("A")) for ch in code[:2])
     return "💱"
@@ -452,7 +521,8 @@ def icon(code, all_codes):
     p = os.path.join(ICONS, f"{code}.png")
     if os.path.exists(p):
         return {"path": p}
-    if not os.path.exists(os.path.join(ICONS, ".done")):
+    if (not os.path.exists(os.path.join(ICONS, ".done"))
+            and not marker_fresh(os.path.join(CACHE, "icons.fail"))):   # a failed render backs off 60 s
         background("--icons", *sorted(all_codes), lock=os.path.join(CACHE, "icons.lock"))
     return None
 
@@ -471,17 +541,41 @@ def render_icons(codes):
 
 # ---------- parsing ----------
 
-def norm_number(s):
-    """'1.299,90' -> '1299.90', '1,200' -> '1200', '2,5' -> '2.5', '12.99' stays."""
+FA_MAP = str.maketrans({"ي": "ی", "ك": "ک", "ة": "ه", "ى": "ی"})
+FA_DROP = re.compile("[‌‍‎‏ً-ٰٟـ]")
+SPACES = str.maketrans({" ": " ", " ": " ", " ": " "})
+FA_UNITS = ("تومان", "تومن", "ریال", "دلار", "یورو", "لیر", "لیره", "درهم", "پوند", "یوان",
+            "روبل", "دینار", "روپیه")
+FA_MULTS = ("میلیارد", "میلیون", "هزار")
+GROUP = re.compile(r"\d{3}(?:[.,]\d+)?")
+HSPACE = re.compile(r"[ \t]*")
+
+
+def normalize_text(q):
+    """Persian/Arabic clean-up: unify look-alike letters, drop ZWNJ, direction marks, diacritics."""
+    return FA_DROP.sub("", q.translate(FA_MAP)).translate(SPACES)
+
+
+def norm_number(s, dot_decimal=False):
+    """'1.299,90' -> '1299.90', '1,200' -> '1200', '2,5' -> '2.5', '12.99' stays.
+    dot_decimal (gold, coins, BTC): a lone '.' is a decimal point, '1.250' is 1.25."""
     if "," in s and "." in s:
         if s.rfind(".") > s.rfind(","):
             return s.replace(",", "")
         return s.replace(".", "").replace(",", ".")
     if "," in s:
         return s.replace(",", "") if re.fullmatch(r"\d{1,3}(,\d{3})+", s) else s.replace(",", ".")
-    if re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", s):
+    if not dot_decimal and re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", s):
         return s.replace(".", "")    # 1.299 (Turkish/European thousands)
     return s
+
+
+def strip_zeros(s):
+    """'05' -> '5', '0912' -> '912', '0.5' stays (Python rejects leading zeros)."""
+    t = s.lstrip("0")
+    if not t:
+        return "0"
+    return "0" + t if t[0] in ".eE" else t
 
 
 OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -514,7 +608,13 @@ def safe_eval(expr):
 
 
 # A number ends on a digit, so a trailing "." or "," stays out of the token.
-TOKEN = re.compile(r"(?P<num>\d(?:[\d.,]*\d)?)|(?P<word>[A-Za-zÀ-ÖØ-öø-ɏ]+|[؀-ۿ]+)|(?P<sym>[₺$€£¥₽﷼])|(?P<op>[-+*/×÷^()])")
+# "exp" (1e10) is only read as a number in a typed query. Persian words are letters only.
+TOKEN = re.compile(
+    r"(?P<exp>\d+(?:\.\d+)?[eE][+-]?\d+(?![\d.A-Za-z]))"
+    r"|(?P<num>\d(?:[\d.,]*\d)?)"
+    r"|(?P<word>[A-Za-zÀ-ÖØ-öø-ɏ]+|[ء-يٱ-ۓە]+)"
+    r"|(?P<sym>[₺$€£¥₽﷼₹₩₪฿₼])"
+    r"|(?P<op>[-+*/×÷^()])")
 
 
 def plain_text(text):
@@ -543,12 +643,12 @@ def name_matches(text, known, prefix_from):
     return whole, prefix
 
 
-def resolve_name(text, known):
+def resolve_name(text, known, prefix_from=3):
     """The one currency a word names, else None. A whole word beats a prefix of the
-    name; a prefix needs 3+ letters; PREFERRED settles shared words like "dirham"."""
+    name; a prefix needs prefix_from+ letters; PREFERRED settles shared words like "dirham"."""
     if not (text.isascii() and text.isalpha()):
         return None
-    whole, prefix = name_matches(text, known, 3)
+    whole, prefix = name_matches(text, known, prefix_from)
     pool = whole or prefix
     if len(pool) > 1 and whole:
         low = plain_text(text)
@@ -558,10 +658,10 @@ def resolve_name(text, known):
     return pool[0] if len(pool) == 1 else None
 
 
-def word_class(text, known):
+def word_class(text, known, prefix_from=3):
     """How a word should be read: symbol/alias/uppercase outrank a bare code, then names."""
     low = text.lower()
-    if low in MULTIPLIERS or low == "x" or low in CONNECTORS:
+    if low in MULTIPLIERS or low == "x" or low in CONNECTORS or text == "و":
         return "plain"
     if text in SYMBOLS:
         return "symbol"
@@ -572,7 +672,7 @@ def word_class(text, known):
         return "upper"
     if upper in known:
         return "weak"
-    if resolve_name(text, known):
+    if resolve_name(text, known, prefix_from):
         return "name"
     if len(text) == 3 and text.isascii() and text.isupper():
         return "upper-unknown"
@@ -592,106 +692,335 @@ def absorb_group(prev, text):
     return merged
 
 
-def parse(q, known):
-    """Return (amount, [codes], unknown, expression shown, bad expression or None)."""
-    q = q.translate(DIGITS)
-    matches = list(TOKEN.finditer(q))
-    # Strong tokens make bare lowercase codes and names count as prose ("All items ₺1.299").
-    # A connector ("100 try to EUR") shows the words are meant, so then only symbols count.
-    connected = any(m.lastgroup == "word" and m.group().lower() in CONNECTORS for m in matches)
-    strong = False
-    for match in matches:
-        if match.lastgroup == "sym":
-            strong = True
-        elif match.lastgroup == "word":
-            wk = word_class(match.group(), known)
-            if wk == "symbol" or (wk in ("alias", "upper") and not connected):
-                strong = True
-    expr, codes, unknown = [], [], []
-    typed_math = False
-    last_num_end = None
-    since_op = True
-    for match in matches:
-        kind, text = match.lastgroup, match.group()
-        if kind == "num":
-            # Two numbers with nothing between them: keep the first, unless the
-            # next one is a 3-digit group sitting right after the previous ("1 299,90").
-            if last_num_end is not None and not since_op:
-                gap = q[last_num_end:match.start()]
-                prev = expr[-1] if expr else ""
-                if (re.fullmatch(r"\s*", gap) and re.fullmatch(r"\d{3}(?:[.,]\d+)?", text)
-                        and re.fullmatch(r"\d+", prev)):
-                    expr[-1] = absorb_group(prev, text)
-                    last_num_end = match.end()
-                continue
-            expr.append(norm_number(text))
-            last_num_end = match.end()
-            since_op = False
+class Tok:
+    __slots__ = ("kind", "text", "start", "end")
+
+    def __init__(self, kind, text, start, end):
+        self.kind, self.text, self.start, self.end = kind, text, start, end
+
+
+def fa_pieces(word):
+    """Split glued Persian money words and strip suffixes: هزارتومان -> هزار تومان, تومانی -> تومان."""
+    if word in SYMBOLS or word in MULTIPLIERS or word == "و":
+        return [word]
+    for mult in FA_MULTS:
+        if word.startswith(mult) and len(word) > len(mult):
+            rest = fa_pieces(word[len(mult):])
+            if len(rest) == 1 and rest[0] in FA_UNITS:
+                return [mult, rest[0]]
+    for unit in FA_UNITS:
+        if word in (unit + "ی", unit + "یی"):
+            return [unit]
+    return [word]
+
+
+def tokenize(q):
+    """Tokens of q (Persian digits read as ASCII; offsets stay valid for q itself)."""
+    toks = []
+    for m in TOKEN.finditer(q.translate(DIGITS)):
+        kind, text = m.lastgroup, m.group()
+        if kind == "word" and "ء" <= text[0] <= "ە":
+            pieces = fa_pieces(text)
+            if len(pieces) > 1 and "".join(pieces) == text:
+                pos = m.start()
+                for piece in pieces:
+                    toks.append(Tok("word", piece, pos, pos + len(piece)))
+                    pos += len(piece)
+            else:
+                toks.append(Tok("word", pieces[0], m.start(), m.end()))
             continue
+        toks.append(Tok(kind, text, m.start(), m.end()))
+    for i, t in enumerate(toks):          # "۲۵۰ت" -> 250 Toman
+        if (t.kind == "word" and t.text == "ت" and i and toks[i - 1].kind in ("num", "exp")
+                and toks[i - 1].end == t.start):
+            t.text = "تومان"
+    out = []
+    for t in toks:                        # "1 299,90": a 3-digit group right after a number joins it
+        prev = out[-1] if out else None
+        if (t.kind == "num" and prev is not None and prev.kind == "num" and prev.text.isdigit()
+                and HSPACE.fullmatch(q[prev.end:t.start]) and GROUP.fullmatch(t.text)):
+            prev.text = absorb_group(prev.text, t.text)
+            prev.end = t.end
+        else:
+            out.append(t)
+    return out
+
+
+def ws_gap(q, a, b):
+    """Only spaces between token a and token b (no line break)."""
+    return HSPACE.fullmatch(q[a.end:b.start]) is not None
+
+
+def num_text(tok, dot):
+    return strip_zeros(tok.text if tok.kind == "exp" else norm_number(tok.text, dot))
+
+
+def good_num(tok, dot):
+    try:
+        float(num_text(tok, dot))
+        return True
+    except ValueError:
+        return False
+
+
+def read_atom(toks, i, q, dot):
+    """A number with its multiplier ("5 million"), joined by "و" ("۵ میلیون و ۵۰۰ هزار").
+    Returns ([(number text, multiplier, typed multiplier)], index of the last token used)."""
+    terms = []
+    j = i
+    while True:
+        mult, typed = 1.0, ""
+        k = j + 1
+        if (k < len(toks) and toks[k].kind == "word" and toks[k].text.lower() in MULTIPLIERS
+                and ws_gap(q, toks[j], toks[k])):
+            typed = toks[k].text.lower()
+            mult = MULTIPLIERS[typed]
+            k += 1
+        terms.append((num_text(toks[j], dot), mult, typed))
+        j = k - 1
+        if (j + 2 < len(toks) and toks[j + 1].kind == "word" and toks[j + 1].text == "و"
+                and toks[j + 2].kind == "num" and good_num(toks[j + 2], dot)
+                and ws_gap(q, toks[j], toks[j + 1]) and ws_gap(q, toks[j + 1], toks[j + 2])):
+            j += 2
+            continue
+        return terms, j
+
+
+def query_word_ok(text, known, code_like=True):
+    """True when a word is something a typed query may hold: currency, multiplier, connector.
+    code_like: a 3-letter word that is no currency may be a mistyped code ("100 xyz")."""
+    low = text.lower()
+    if low in MULTIPLIERS or low == "x" or low in CONNECTORS or text == "و":
+        return True
+    if text in SYMBOLS or low in ALIASES or text.upper() in known:
+        return True
+    if not (text.isascii() and text.isalpha()):
+        return False
+    if name_matches(text, known, 99)[0]:
+        return True
+    return code_like and word_class(text, known) in ("upper-unknown", "weak-unknown")
+
+
+def classify(q, toks, known, pending):
+    """"query" when the whole text is amount/currency/operator words, else "prose"."""
+    if "\n" in q or "\r" in q:
+        return "prose"
+    priced = 0                              # "$50 - $70": several symbol+number pairs = a price list
+    for i, t in enumerate(toks[:-1]):
+        nxt = toks[i + 1]
+        if t.kind == "sym" and nxt.kind in ("num", "exp") and ws_gap(q, t, nxt):
+            priced += 1
+    if priced > 1:
+        return "prose"
+    # An unknown 3-letter word only reads as a mistyped code when no real currency is present.
+    code_like = not any(
+        t.kind == "sym" or (t.kind == "word" and query_word_ok(t.text, known, False)
+                            and word_class(t.text, known) not in ("plain",))
+        for t in toks)
+    last = len(toks) - 1
+    for i, t in enumerate(toks):
+        if t.kind != "word" or query_word_ok(t.text, known, code_like):
+            continue
+        if i == last and (pending or resolve_name(t.text, known)):
+            continue                        # an unfinished last word, or the start of one currency name
+        return "prose"
+    return "query"
+
+
+def new_result(mode):
+    return {"amount": 1.0, "codes": [], "unknown": [], "shown": "", "bad": None,
+            "mode": mode, "assumed": False}
+
+
+def parse_query(q, toks, known, dot):
+    """Typed query: every code counts in typed order, math is on."""
+    res = new_result("query")
+    items = []                  # (expression text, text as typed)
+    typed_math = False
+    prev = "start"              # start | num | op | lp | rp
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        kind = t.kind
+        if kind in ("num", "exp"):
+            if prev == "num":                 # two numbers in a row: keep the first
+                i += 1
+                continue
+            terms, last = read_atom(toks, i, q, dot)
+            parts = [n if m == 1 else f"{n}*{m:.0f}" for n, m, _ in terms]
+            if len(terms) == 1 and terms[0][1] == 1:
+                expr = parts[0]
+            else:
+                expr = "(" + "+".join(parts) + ")"
+            shown = "+".join(n + (w if len(w) <= 1 else f" {w} ") for n, _, w in terms)
+            items.append((expr, shown.strip()))
+            prev = "num"
+            i = last + 1
+            continue
+        i += 1
         if kind == "op":
-            typed_math = typed_math or text not in "()"
-            expr.append({"×": "*", "÷": "/", "^": "**"}.get(text, text))
-            since_op = True
+            ch = t.text
+            if ch == "(":
+                items.append(("(", "("))
+                prev = "lp"
+            elif ch == ")":
+                items.append((")", ")"))
+                prev = "rp"
+            else:
+                if ch not in "+-" or prev in ("num", "rp"):
+                    typed_math = True         # a leading minus is a sign, not math
+                items.append(({"×": "*", "÷": "/", "^": "**"}.get(ch, ch), {"×": "*", "÷": "/"}.get(ch, ch)))
+                prev = "op"
             continue
         if kind == "sym":
-            codes.append(SYMBOLS[text])
+            res["codes"].append(SYMBOLS[t.text])
             continue
-        low = text.lower()
-        if low in MULTIPLIERS and expr and expr[-1][-1:].isdigit():
-            expr[-1] = f"({expr[-1]}*{MULTIPLIERS[low]:.0f})"
+        text, low = t.text, t.text.lower()
+        if low in MULTIPLIERS or low in CONNECTORS or text == "و":
             continue
-        if low == "x" and expr:
-            typed_math = True
-            expr.append("*")
-            since_op = True
-            continue
-        if low in CONNECTORS:
+        if low == "x":
+            if items:
+                typed_math = True
+                items.append(("*", "*"))
+                prev = "op"
             continue
         wk = word_class(text, known)
         if wk == "symbol":
-            codes.append(SYMBOLS[text])
+            res["codes"].append(SYMBOLS[text])
         elif wk == "alias":
-            codes.append(ALIASES[low])
-        elif wk == "upper":
-            codes.append(text.upper())
-        elif wk == "weak" and not strong:
-            codes.append(text.upper())
-        elif wk == "name" and not strong:     # like a bare code: prose next to a symbol is ignored
-            codes.append(resolve_name(text, known))
-        elif wk == "upper-unknown":
-            unknown.append(text.upper())
-        elif wk == "weak-unknown" and not strong:
-            unknown.append(text.upper())
-    amount = 1.0
-    shown = ""
-    bad = None
-    if expr:
-        joined = "".join(expr)
+            res["codes"].append(ALIASES[low])
+        elif wk in ("upper", "weak"):
+            res["codes"].append(text.upper())
+        elif wk == "name":
+            res["codes"].append(resolve_name(text, known))
+        elif wk in ("upper-unknown", "weak-unknown"):
+            res["unknown"].append(text.upper())
+    if items:
+        joined = "".join(e for e, _ in items)
+        typed = "".join(s for _, s in items)
         try:
-            amount = safe_eval(joined)
-            shown = joined.replace("**", "^") if typed_math else ""
-        except (ValueError, SyntaxError, ZeroDivisionError, OverflowError, TypeError, ArithmeticError):
-            bad = joined.replace("**", "^")
-    return amount, codes, unknown, shown, bad
+            if len(joined) > 200:
+                raise ValueError("expression too long")
+            res["amount"] = safe_eval(joined)
+            res["shown"] = typed if typed_math else ""
+        except Exception:                     # syntax, zero division, overflow, recursion ...
+            res["bad"] = typed or "?"
+    return res
+
+
+def parse_prose(q, toks, known, dot):
+    """Selected text: find the currency, then the number right next to it. No math."""
+    res = new_result("prose")
+    atoms = []                  # (first token, last token, value)
+    i = 0
+    while i < len(toks):
+        if toks[i].kind == "num" and good_num(toks[i], dot):
+            terms, last = read_atom(toks, i, q, dot)
+            atoms.append((i, last, sum(float(n) * m for n, m, _ in terms)))
+            i = last + 1
+        else:
+            i += 1
+    cands = []                  # (token index, code, strong)
+    for idx, t in enumerate(toks):
+        if t.kind == "sym":
+            cands.append((idx, SYMBOLS[t.text], True))
+        elif t.kind == "word":
+            wk = word_class(t.text, known, 4)
+            if wk == "symbol":
+                cands.append((idx, SYMBOLS[t.text], True))
+            elif wk == "alias":
+                cands.append((idx, ALIASES[t.text.lower()], True))
+            elif wk == "upper":
+                cands.append((idx, t.text.upper(), True))
+            elif wk == "weak":
+                cands.append((idx, t.text.upper(), False))
+            elif wk == "name":
+                cands.append((idx, resolve_name(t.text, known, 4), False))
+            elif wk == "upper-unknown":
+                res["unknown"].append(t.text.upper())
+    pool = [c for c in cands if c[2]] or cands
+
+    def next_to(idx):
+        before = [a for a in atoms if a[1] == idx - 1 and ws_gap(q, toks[a[1]], toks[idx])]
+        after = [a for a in atoms if a[0] == idx + 1 and ws_gap(q, toks[idx], toks[a[0]])]
+        order = (after + before) if toks[idx].kind == "sym" else (before + after)
+        return order[0] if order else None
+
+    def nearest(idx):
+        best, best_key = None, None
+        for a in atoms:
+            dist = min(abs(a[0] - idx), abs(a[1] - idx))
+            span = q[min(toks[idx].start, toks[a[0]].start):max(toks[idx].start, toks[a[0]].start)]
+            key = ("\n" in span, dist, a[0])
+            if best_key is None or key < best_key:
+                best, best_key = a, key
+        return best
+
+    chosen = atom = None
+    for idx, code, _ in pool:
+        atom = next_to(idx)
+        if atom:
+            chosen = (idx, code)
+            break
+    if chosen is None and pool:
+        chosen = (pool[0][0], pool[0][1])
+        atom = nearest(chosen[0])
+    if chosen is None:
+        atom = atoms[0] if atoms else None
+        res["assumed"] = True
+    else:
+        res["codes"].append(chosen[1])
+        later = [n for n in range(chosen[0] + 1, len(toks))
+                 if toks[n].kind == "word" and toks[n].text.lower() in CONNECTORS]
+        if later:
+            for t in toks[later[0] + 1:]:
+                if t.kind == "sym":
+                    res["codes"].append(SYMBOLS[t.text])
+                    continue
+                wk = word_class(t.text, known, 4) if t.kind == "word" else "plain"
+                if wk == "symbol":
+                    res["codes"].append(SYMBOLS[t.text])
+                elif wk == "alias":
+                    res["codes"].append(ALIASES[t.text.lower()])
+                elif wk in ("upper", "weak"):
+                    res["codes"].append(t.text.upper())
+                elif wk == "name":
+                    res["codes"].append(resolve_name(t.text, known, 4))
+                else:
+                    break
+    if atom:
+        res["amount"] = atom[2]
+    return res
+
+
+def parse(q, known, pending=None):
+    """Return a dict: amount, codes, unknown, shown (typed math), bad, mode, assumed."""
+    toks = tokenize(q)
+    mode = classify(q, toks, known, pending)
+    run = parse_query if mode == "query" else parse_prose
+    res = run(q, toks, known, False)
+    if res["codes"] and res["codes"][0] in COINS:   # gold, coins, BTC: "1.250" is 1.25
+        res = run(q, toks, known, True)
+    return res
 
 
 def pending_word(q, known):
     """The unfinished last word as (start offset, candidate codes), or None.
     Unfinished = a word at the very end that is no exact code, alias, symbol or single name
     but is the start of a code or a currency name."""
-    matches = list(TOKEN.finditer(q.translate(DIGITS)))
-    if not matches:
+    toks = tokenize(q)
+    if not toks:
         return None
-    last = matches[-1]
-    text, low = last.group(), last.group().lower()
-    if last.lastgroup != "word" or q[last.end():].strip() or not text.isascii():
+    last = toks[-1]
+    text, low = last.text, last.text.lower()
+    if last.kind != "word" or q[last.end:].strip() or not text.isascii():
         return None
     if (low in MULTIPLIERS or low == "x" or low in CONNECTORS or text in SYMBOLS
             or low in ALIASES or text.upper() in known or resolve_name(text, known)):
         return None
-    if len(matches) > 1 and not any(
-            m.lastgroup in ("num", "sym") or word_class(m.group(), known) not in ("plain", "weak-unknown")
-            for m in matches[:-1]):
+    if len(toks) > 1 and not any(
+            t.kind in ("num", "exp", "sym") or word_class(t.text, known) not in ("plain", "weak-unknown")
+            for t in toks[:-1]):
         return None                       # prose with no amount or currency in front of it
     whole, prefix = name_matches(text, known, 1)
     group = {c: 2 for c in prefix}                       # name starts with the text
@@ -699,10 +1028,10 @@ def pending_word(q, known):
     group.update({ALIASES[a]: 1 for a in ALIASES         # country or alias starts with it
                   if len(low) >= 2 and a.startswith(low) and ALIASES[a] in known})
     group.update({c: 0 for c in known if c.lower().startswith(low)})   # code starts with it
-    used = set(parse(q[:last.start()], known)[1])
+    used = set(parse(q[:last.start], known)["codes"])
     pool = [c for c in group if c not in used] or list(group)
     pool.sort(key=lambda c: (group[c], POPULAR.index(c) if c in POPULAR else len(POPULAR), c))
-    return (last.start(), pool[:MAX_CANDIDATES]) if pool else None
+    return (last.start, pool[:MAX_CANDIDATES]) if pool else None
 
 
 # ---------- output ----------
@@ -734,35 +1063,51 @@ def fmt(x, code="", sep=True):
 
 def fmt_amount(x, code):
     """The user's own amount: keep cents (1,299.90), unlike converted results."""
-    if code in TOMAN or x == int(x):
-        return f"{x:,.0f}"
+    rounded = round(x, 6)
+    if code in TOMAN or rounded == int(rounded):
+        return f"{rounded:,.0f}"
     return f"{x:,.2f}" if abs(x) >= 1 else fmt_small(x)
 
 
 def main():
-    q = " ".join(sys.argv[1:]).strip()
+    q = normalize_text(" ".join(sys.argv[1:])).strip()
     if not q:
         emit([{"title": "Type an amount and a currency", "valid": False,
                "subtitle": "$100 try  ·  $100 try eur  ·  $5m irt  ·  $1200+350 try  ·  $2 emami"}])
         return
+    world, world_old, world_err = None, False, ""
     try:
         world, world_old = load("world")
     except Exception as exc:
-        emit([{"title": "Couldn't get exchange rates", "valid": False,
-               "subtitle": f"{type(exc).__name__} — check internet/VPN"}])
-        return
-    W = world["rates"]
-    known = set(W) | LOCAL
-    amount, codes, unknown, shown, bad = parse(q, known)
-    if bad:
-        emit([{"title": f"Invalid expression: {q}", "valid": False}])
+        world_err = fail_message(exc)
+    bon = bon_err = None
+    bon_old = False
+    if world is None:                    # no world rates: bonbast alone can still answer Toman queries
+        try:
+            bon, bon_old = load("bonbast")
+        except Exception as exc:
+            bon_err = fail_message(exc)
+        if bon is None:
+            emit([{"title": "Couldn't get exchange rates", "valid": False,
+                   "subtitle": f"{world_err} — check internet/VPN"}])
+            return
+    W = world["rates"] if world else {}
+    known = set(W) | LOCAL | (set(bon["rates"]) if bon else set())
+
+    def invalid(text, more=()):
+        shown = text if len(text) <= 60 else text[:57] + "…"
+        emit([{"title": f"Invalid expression: {shown}", "valid": False}] + list(more))
+
+    pending = pending_word(q, known)
+    res = parse(q, known, pending)
+    if res["bad"]:
+        invalid(q)
         return
     # An unfinished last word converts with its best match right away ("$100 tr" -> TRY);
-    # the other matches follow the results as Tab rows.
+    # the other matches follow the results as Tab rows. Only a typed query completes words.
     complete = None
     others = []
-    pending = pending_word(q, known)
-    if pending:
+    if pending and res["mode"] == "query":
         start, found = pending
         # Fill in the case that was typed: an upper-case code would outrank "try" in "100 try eur".
         cased = (lambda c: c.lower()) if q[start:].islower() else (lambda c: c)
@@ -776,41 +1121,43 @@ def main():
             others.append(row)
         q = f"{q[:start]}{cased(found[0])}"
         complete = f"{q} "
-        amount, codes, unknown, shown, bad = parse(q, known)
-        if bad:
-            emit([{"title": f"Invalid expression: {q}", "valid": False}] + others)
+        res = parse(q, known)
+        if res["bad"]:
+            invalid(q, others)
             return
+    amount, codes, unknown = res["amount"], res["codes"], res["unknown"]
+    shown, assumed = res["shown"], res["assumed"]
     if unknown and not codes:
         emit([{"title": f"Unknown currency: {', '.join(unknown)}", "valid": False,
                "subtitle": "Use 3-letter codes: USD EUR TRY GBP AED … names like yen, or toman, emami, gram"}])
         return
+    if abs(amount) > 1e15:
+        emit([{"title": "Amount too large", "valid": False,
+               "subtitle": "Keep amounts below 1,000,000,000,000,000"}])
+        return
     src = codes[0] if codes else "USD"
     targets = [c for c in dict.fromkeys(codes[1:]) if c != src and c in known]
     if not targets:
-        targets = (USD_TARGETS if src == "USD" else TOMAN_TARGETS if src in TOMAN
-                   else COIN_TARGETS if src in COINS else DEFAULT_TARGETS)
-        targets = [t for t in targets if t != src and t in known]
+        targets = default_targets(src, known)
 
-    bon = bon_err = None
-    bon_old = False
     ref = None
     ref_label = "yesterday"
-    if src in LOCAL or any(t in LOCAL for t in targets):
+    if bon is None and bon_err is None and (src in LOCAL or any(t in LOCAL for t in targets)):
         try:
             bon, bon_old = load("bonbast")
         except Exception as exc:
-            bon_err = str(exc) if isinstance(exc, FileNotFoundError) else type(exc).__name__
-        if bon and SHOW_CHANGE:
-            snap = snapshot_around(time.time() - 86400, 90 * 60)
-            if snap:
-                ref, ref_label = snap, "24h ago"
-            else:
-                try:
-                    hist, _ = load("history", wait=False)
-                except Exception:
-                    hist = None
-                if hist:
-                    ref, ref_label = hist, "yesterday"
+            bon_err = fail_message(exc)
+    if bon and SHOW_CHANGE and (src in LOCAL or any(t in LOCAL for t in targets)):
+        snap = snapshot_around(time.time() - 86400, 90 * 60)
+        if snap:
+            ref, ref_label = snap, "24h ago"
+        else:
+            try:
+                hist, _ = load("history", wait=False)
+            except Exception:
+                hist = None
+            if hist:
+                ref, ref_label = hist, "yesterday"
 
     def toman_per(c, data, cross=True):   # Toman for 1 unit of c, or None
         if c in TOMAN:
@@ -829,7 +1176,8 @@ def main():
     for tgt in targets:
         name = LABEL.get(tgt, tgt)
         change = ""
-        if src in LOCAL or tgt in LOCAL:
+        both_toman = src in TOMAN and tgt in TOMAN
+        if src in LOCAL or tgt in LOCAL or world is None:
             if bon is None:
                 items.append({"title": f"{name}: bonbast unavailable", "valid": False,
                               "subtitle": f"{bon_err or 'error'} — Toman, gold and coin prices come from bonbast"})
@@ -851,12 +1199,12 @@ def main():
                     note += f"  ·  old prices ({int(age_s // 3600)}h)"
             # Change of the non-Toman side's Toman price. When the row shows the
             # inverse (Toman → foreign), the title arrow follows the displayed number.
-            foreign = tgt if src in TOMAN else src if tgt in TOMAN else None
+            foreign = None if both_toman else tgt if src in TOMAN else src if tgt in TOMAN else None
             if ref and foreign:
                 now_price, then_price = toman_per(foreign, bon), toman_per(foreign, ref, cross=False)
                 if now_price and then_price:
                     pct = (now_price / then_price - 1) * 100
-                    title_pct = -pct if src in TOMAN else pct
+                    title_pct = (then_price / now_price - 1) * 100 if src in TOMAN else pct
 
                     def arrow(value):
                         if abs(value) < 0.005:
@@ -871,13 +1219,14 @@ def main():
         value = amount * unit
         plain = fmt(value, tgt, sep=False)
         # Quote the rate per foreign unit, never "1 Toman = 0.0000037 USD".
-        rate = (f"1 {name} = {fmt(1 / unit, src)} {sname}" if src in TOMAN
+        rate = (f"1 {name} = {fmt(1 / unit, '' if both_toman else src)} {sname}" if src in TOMAN
                 else f"1 {sname} = {fmt(unit, tgt)} {name}")
         lhs = f"{shown} = " if shown else ""
         rate_part = "" if amount == 1 else f"{rate}  ·  "
+        extra = "  ·  no currency found — assuming USD" if assumed else ""
         item = {
             "title": f"{fmt(value, tgt)} {name}{change}",
-            "subtitle": f"{lhs}{fmt_amount(amount, src)} {sfull} = {fmt(value, tgt)} {name}  ·  {rate_part}{note}",
+            "subtitle": f"{lhs}{fmt_amount(amount, src)} {sfull} = {fmt(value, tgt)} {name}  ·  {rate_part}{note}{extra}",
             "arg": plain,
             "text": {"copy": plain, "largetype": f"{fmt_amount(amount, src)} {sname}\n= {fmt(value, tgt)} {name}"},
             "mods": {"cmd": {"arg": plain, "subtitle": "Paste the number into the front app"}},
@@ -892,16 +1241,16 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["--refresh"]:
+    if sys.argv[1:2] == ["--refresh"] and len(sys.argv) > 2 and sys.argv[2] in FETCHERS:
         name = sys.argv[2]
         ok = False
         try:
             refresh(name)
             ok = True
-        except Exception:
+        except Exception as exc:
             # Keep a 60 s backoff so a dead source is not retried on every keystroke.
             try:
-                touch(fail_path(name))
+                touch(fail_path(name), fail_text(exc))
             except OSError:
                 pass
         finally:
@@ -914,9 +1263,18 @@ if __name__ == "__main__":
                 os.remove(path(name) + ".lock")
             except OSError:
                 pass
-    elif sys.argv[1:2] == ["--icons"]:
+    elif sys.argv[1:2] == ["--icons"] and len(sys.argv) > 2:
         try:
             render_icons(sys.argv[2:])
+            try:
+                os.remove(os.path.join(CACHE, "icons.fail"))
+            except OSError:
+                pass
+        except Exception:
+            try:
+                touch(os.path.join(CACHE, "icons.fail"))
+            except OSError:
+                pass
         finally:
             try:
                 os.remove(os.path.join(CACHE, "icons.lock"))

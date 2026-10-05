@@ -19,7 +19,9 @@ Type `$` and an amount. Results show as you type, with the country's flag on eac
 
 - ↩ copies the number. ⌘↩ pastes it into the front app.
 - `irt`, `toman`, `tmn` mean Toman; `irr`, `rial` mean Rial. `tl`, `lira`, `dollar`, `euro`, `pound`, `dirham` work as names.
-- Gold and coins: `emami`, `azadi`, `half`, `quarter`, `gerami`, `gram` (18k), `mithqal`, `ounce`, `btc`.
+- Gold and coins: `emami`, `azadi`, `half`, `quarter`, `gerami`, `gram` (18k), `mithqal`, `ounce`, `btc`. For these a lone `.` is a decimal point: `$1.250 gram` is 1.25 grams.
+- Symbols: `₺ $ € £ ¥ ₽ ﷼ ₹ ₩ ₪ ฿ ₼`, plus `Rs` (INR) and `kr` (SEK). Words: `ruble`/`rouble` (RUB), `kronor` (SEK), `krone` (NOK), `riyal` (SAR). `$5 million toman`, `$1e10 try` (scientific notation) and `$05 try` work; amounts above 10^15 and expressions longer than 200 characters get a clear message instead of a result.
+- With the world rates unreachable, Toman, gold and coin queries (and `try`/`usd` against them) still work from bonbast.
 
 ## Currency names and guided picking
 
@@ -33,9 +35,16 @@ When the last word is unfinished or shared, the conversion uses the best match s
 
 - `$100 tr` converts TRY. TTD is listed below it. ⇥ gives `$100 try `.
 - `$100 try to e` converts to EUR. EGP, EMAMI, ERN and more are listed below.
-- `$100 dinar` converts BHD and lists the other dinars.
+- `$100 dinar` converts IQD (the usual dinar). Other dinars are listed if you type part of a name: `$100 dina`.
 
-Like lowercase codes, names are ignored when the text already has a currency symbol or a capitalised code, so selected prose such as "Only $5, real deal" is not read as currency names. A connector word (`to`, `in`, `as`, `=`) lifts that for capitalised codes: `$100 try to EUR` converts TRY to EUR. Without one, `$100 TRY yen` ignores `yen`, so write codes in lowercase when you mix them.
+## Typed query or selected text
+
+The workflow tells the two apart by the text itself.
+
+- **Typed query** (one line, only amounts, operators, currency words, connectors and multipliers): every currency is kept in the order you typed it. The first is the source and the rest are targets, whatever the case: `$100 lira eur`, `$100 TL eur`, `$100 TRY eur` and `$100 try EUR` all convert TRY to EUR, and `₺50 to eur` does too. Math is on.
+- **Selected text** (anything with other words or several lines): the first currency symbol, capitalised code, alias or Persian currency word is the source, and the amount is the number right next to it, with its multiplier. Math is off, so `Order 12345 total $99` is 99 USD, `20% off 100 TL` is 100 TRY, `3 for $10` is 10 USD, `$50 - $70` is 50 USD, and `Price 100 TL, size M` is 100 TRY. Bare lower-case codes and currency names are used only when the text has no symbol, alias or capitalised code; names must be whole words or start with 4+ letters. A currency after `to`, `in` or `as` becomes the target. If no currency is found the amount is read as USD and the subtitle says "no currency found — assuming USD".
+
+A multiplier (`k`, `m`, `thousand`, `million`, `billion`, `هزار`, `میلیون`, `میلیارد`) counts only when it follows the number directly.
 
 ## Convert selected text
 
@@ -47,7 +56,9 @@ Give the Hotkey trigger a shortcut (Alfred removes hotkeys on import, so the tri
 
 The same works from Alfred's Universal Actions: select text anywhere, or take a calculator or clipboard result, press → (the actions key), and choose **Convert Currency**. The workflow ships this trigger already connected to the converter.
 
-The first currency symbol or code in the selection is the source. Turkish and European number formats (`1.299,90`) and thousands separators are read correctly. Stray words such as "All" or "Top" are not taken as currency codes unless written in capitals.
+The currency next to the number is the source (see "Typed query or selected text" above). Turkish and European number formats (`1.299,90`) and thousands separators are read correctly. Stray words such as "All" or "Top" are not taken as currency codes unless written in capitals.
+
+Persian and Arabic text is cleaned first (ي ك ة ى become ی ک ه ی, ZWNJ and direction marks are dropped). Glued forms split: `هزارتومان`, `میلیونتومان`; suffixes are ignored: `تومانی`, `دلاری`, `یورویی`, `لیری`; `۲۵۰ت` means 250 Toman; and `و` joins groups: `۵ میلیون و ۵۰۰ هزار تومان` is 5,500,000 Toman. `سکه` is an Emami coin, `طلا` is gold (gram), `روپیه` is INR.
 
 ## Daily change
 
