@@ -8,6 +8,19 @@
 	<string>Tools</string>
 	<key>connections</key>
 	<dict>
+		<key>6B7E0C7A-3F5D-4A0B-9E21-5D8C4F1A7B33</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>9ACEE995-721A-440D-B91B-989CD7604ED0</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
 		<key>9ACEE995-721A-440D-B91B-989CD7604ED0</key>
 		<array>
 			<dict>
@@ -173,6 +186,27 @@
 			<key>version</key>
 			<integer>2</integer>
 		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>acceptsfiles</key>
+				<false/>
+				<key>acceptsmulti</key>
+				<integer>0</integer>
+				<key>acceptstext</key>
+				<true/>
+				<key>acceptsurls</key>
+				<false/>
+				<key>name</key>
+				<string>Convert Currency</string>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.trigger.universalaction</string>
+			<key>uid</key>
+			<string>6B7E0C7A-3F5D-4A0B-9E21-5D8C4F1A7B33</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
 	</array>
 	<key>readme</key>
 	<string>Keyword $ or ⌥⇧4 on selected text. $100 try → USD + Toman · $100 try eur · $5m irt · $1200+350 try · $2 emami · $1 gram. Toman/Rial/gold/coins from bonbast (buy price, 15 min cache); other rates from open.er-api.com (6 h cache). ↩ copy, ⌘↩ paste.</string>
@@ -184,6 +218,15 @@
 			<integer>450</integer>
 			<key>ypos</key>
 			<integer>140</integer>
+		</dict>
+		<key>6B7E0C7A-3F5D-4A0B-9E21-5D8C4F1A7B33</key>
+		<dict>
+			<key>note</key>
+			<string>Convert the selected text (Universal Actions)</string>
+			<key>xpos</key>
+			<integer>30</integer>
+			<key>ypos</key>
+			<integer>320</integer>
 		</dict>
 		<key>9ACEE995-721A-440D-B91B-989CD7604ED0</key>
 		<dict>
@@ -339,7 +382,7 @@
 	<key>variables</key>
 	<dict/>
 	<key>version</key>
-	<string>1.0.0</string>
+	<string>1.1.0</string>
 	<key>webaddress</key>
 	<string>https://github.com/aliafshany/alfred-currency-toman</string>
 </dict>

@@ -1,11 +1,13 @@
 #!/usr/bin/python3
 """Alfred Script Filter: currency, gold and coin conversion with Iranian Toman, keyword "$".
   $100 try          -> 100 TRY in USD and Toman
-  $100 try eur      -> in EUR only (several targets allowed, "to"/"in" optional)
+  $100 try eur      -> in EUR only (several targets allowed, "to"/"in"/"as" optional)
   $100              -> 100 USD in Toman, TRY, EUR
   $5m irt           -> 5,000,000 Toman in USD, TRY
   $1200+350 try     -> math works in the amount: + - * / x ^ ( )
   $2 emami          -> gold coins and gold: emami, azadi, half, quarter, gerami, gram, mithqal, ounce, btc
+  $100 yen          -> currency names work too (yen, rupee, franc …); a half-typed or ambiguous
+                       last word lists candidates, Tab completes: $100 tu, $100 try to e
 Selected text works too (hotkey): "₺1.299,90", "$12.99", "۱۲۰ هزار تومان".
 World rates: open.er-api.com (daily, no key), jsDelivr currency-api as fallback.
 Toman, Rial, gold and coins: bonbast free-market buy price, via the bonbast CLI.
@@ -22,6 +24,7 @@ import socket
 import subprocess
 import sys
 import time
+import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.environ.get("alfred_workflow_cache", "/tmp/alfred-currency")
@@ -49,6 +52,74 @@ SYMBOLS = {"₺": "TRY", "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "�
            "لیر": "TRY", "لیره": "TRY", "درهم": "AED", "پوند": "GBP"}
 MULTIPLIERS = {"k": 1e3, "m": 1e6, "هزار": 1e3, "میلیون": 1e6, "میلیارد": 1e9}
 LABEL = {"IRT": "Toman", "IRR": "Rial", **{c: v[1] for c, v in COINS.items()}}
+# Currency names: taken from Alfred's official Currency Converter workflow
+# (Alfred team, BSD-3-Clause), plus the local items this workflow adds.
+CURRENCY_NAMES = {
+    "AED": "United Arab Emirates Dirham", "AFN": "Afghan Afghani", "ALL": "Albanian Lek",
+    "AMD": "Armenian Dram", "ANG": "Netherlands Antillian Guilder", "AOA": "Angolan Kwanza",
+    "ARS": "Argentine Peso", "AUD": "Australian Dollar", "AWG": "Aruban Florin",
+    "AZN": "Azerbaijani Manat", "BAM": "Bosnia and Herzegovina Mark", "BBD": "Barbados Dollar",
+    "BDT": "Bangladeshi Taka", "BGN": "Bulgarian Lev", "BHD": "Bahraini Dinar",
+    "BIF": "Burundian Franc", "BMD": "Bermudian Dollar", "BND": "Brunei Dollar",
+    "BOB": "Bolivian Boliviano", "BRL": "Brazilian Real", "BSD": "Bahamian Dollar",
+    "BTN": "Bhutanese Ngultrum", "BWP": "Botswana Pula", "BYN": "Belarusian Rouble",
+    "BZD": "Belize Dollar", "CAD": "Canadian Dollar", "CDF": "Congolese Franc",
+    "CHF": "Swiss Franc", "CLF": "Chilean Unidad de Fomento", "CLP": "Chilean Peso",
+    "CNH": "Chinese Renminbi", "CNY": "Chinese Renminbi", "COP": "Colombian Peso",
+    "CRC": "Costa Rican Colon", "CUP": "Cuban Peso", "CVE": "Cape Verdean Escudo",
+    "CZK": "Czech Koruna", "DJF": "Djiboutian Franc", "DKK": "Danish Krone",
+    "DOP": "Dominican Peso", "DZD": "Algerian Dinar", "EGP": "Egyptian Pound",
+    "ERN": "Eritrean Nakfa", "ETB": "Ethiopian Birr", "EUR": "Euro",
+    "FJD": "Fiji Dollar", "FKP": "Falkland Islands Pound", "FOK": "Faroese Króna",
+    "GBP": "United Kingdom Pound", "GEL": "Georgian Lari", "GGP": "Guernsey Pound",
+    "GHS": "Ghanaian Cedi", "GIP": "Gibraltar Pound", "GMD": "Gambian Dalasi",
+    "GNF": "Guinean Franc", "GTQ": "Guatemalan Quetzal", "GYD": "Guyanese Dollar",
+    "HKD": "Hong Kong Dollar", "HNL": "Honduran Lempira", "HRK": "Croatian Kuna",
+    "HTG": "Haitian Gourde", "HUF": "Hungarian Forint", "IDR": "Indonesian Rupiah",
+    "ILS": "Israeli New Shekel", "IMP": "Manx Pound", "INR": "Indian Rupee",
+    "IQD": "Iraqi Dinar", "IRR": "Iranian Rial", "ISK": "Icelandic Króna",
+    "JEP": "Jersey Pound", "JMD": "Jamaican Dollar", "JOD": "Jordanian Dinar",
+    "JPY": "Japanese Yen", "KES": "Kenyan Shilling", "KGS": "Kyrgyzstani Som",
+    "KHR": "Cambodian Riel", "KID": "Kiribati Dollar", "KMF": "Comorian Franc",
+    "KRW": "South Korean Won", "KWD": "Kuwaiti Dinar", "KYD": "Cayman Islands Dollar",
+    "KZT": "Kazakhstani Tenge", "LAK": "Lao Kip", "LBP": "Lebanese Pound",
+    "LKR": "Sri Lanka Rupee", "LRD": "Liberian Dollar", "LSL": "Lesotho Loti",
+    "LYD": "Libyan Dinar", "MAD": "Moroccan Dirham", "MDL": "Moldovan Leu",
+    "MGA": "Malagasy Ariary", "MKD": "Macedonian Denar", "MMK": "Burmese Kyat",
+    "MNT": "Mongolian Tögrög", "MOP": "Macanese Pataca", "MRU": "Mauritanian Ouguiya",
+    "MUR": "Mauritian Rupee", "MVR": "Maldivian Rufiyaa", "MWK": "Malawian Kwacha",
+    "MXN": "Mexican Peso", "MYR": "Malaysian Ringgit", "MZN": "Mozambican Metical",
+    "NAD": "Namibian Dollar", "NGN": "Nigerian Naira", "NIO": "Nicaraguan Córdoba",
+    "NOK": "Norwegian Krone", "NPR": "Nepalese Rupee", "NZD": "New Zealand Dollar",
+    "OMR": "Omani Rial", "PAB": "Panamanian Balboa", "PEN": "Peruvian Sol",
+    "PGK": "Papua New Guinean Kina", "PHP": "Philippine Peso", "PKR": "Pakistani Rupee",
+    "PLN": "Polish Złoty", "PYG": "Paraguayan Guaraní", "QAR": "Qatari Riyal",
+    "RON": "Romanian Leu", "RSD": "Serbian Dinar", "RUB": "Russian Rouble",
+    "RWF": "Rwandan Franc", "SAR": "Saudi Riyal", "SBD": "Solomon Islands Dollar",
+    "SCR": "Seychellois Rupee", "SDG": "Sudanese Pound", "SEK": "Swedish Krona",
+    "SGD": "Singapore Dollar", "SHP": "Saint Helena Pound", "SLE": "Sierra Leonean Leone",
+    "SLL": "Sierra Leonean Leone", "SOS": "Somali Shilling", "SRD": "Surinamese Dollar",
+    "SSP": "South Sudanese Pound", "STN": "São Tomé and Príncipe Dobra", "SYP": "Syrian Pound",
+    "SZL": "Eswatini Lilangeni", "THB": "Thai Baht", "TJS": "Tajikistani Somoni",
+    "TMT": "Turkmenistan Manat", "TND": "Tunisian Dinar", "TOP": "Tongan Paʻanga",
+    "TRY": "Turkish Lira", "TTD": "Trinidad and Tobago Dollar", "TVD": "Tuvaluan Dollar",
+    "TWD": "New Taiwan Dollar", "TZS": "Tanzanian Shilling", "UAH": "Ukrainian Hryvnia",
+    "UGX": "Ugandan Shilling", "USD": "United States Dollar", "UYU": "Uruguayan Peso",
+    "UZS": "Uzbekistani So'm", "VES": "Venezuelan Bolívar Soberano", "VND": "Vietnamese Đồng",
+    "VUV": "Vanuatu Vatu", "WST": "Samoan Tālā", "XAF": "Central African Franc",
+    "XCD": "East Caribbean Dollar", "XCG": "Caribbean Guilder", "XDR": "Special Drawing Rights",
+    "XOF": "West African Franc", "XPF": "CFP Franc", "YER": "Yemeni Rial",
+    "ZAR": "South African Rand", "ZMW": "Zambian Kwacha", "ZWG": "Zimbabwean ZiG",
+    "ZWL": "Zimbabwean Dollar",
+    "IRT": "Iranian Toman", **{c: v[1] for c, v in COINS.items()},
+}
+NAME_STOP = {"and", "of", "the"}         # words of a name that never identify it
+# A bare word that several names share goes to the usual currency (dirham -> AED, not MAD).
+PREFERRED = {"dirham": "AED", "dollar": "USD", "pound": "GBP", "franc": "CHF", "rupee": "INR",
+             "peso": "MXN", "krona": "SEK"}
+POPULAR = ["USD", "EUR", "GBP", "TRY", "JPY", "CHF", "CAD", "AUD", "CNY", "AED", "INR", "IRT"]
+CONNECTORS = ("to", "in", "as", "=", "به")
+MAX_CANDIDATES = 15
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫٬", "01234567890123456789.,")
 
 
@@ -434,10 +505,51 @@ def safe_eval(expr):
 TOKEN = re.compile(r"(?P<num>\d(?:[\d.,]*\d)?)|(?P<word>[A-Za-z]+|[؀-ۿ]+)|(?P<sym>[₺$€£¥₽﷼])|(?P<op>[-+*/×÷^()])")
 
 
+def plain_text(text):
+    """Lower-case ASCII form: 'Króna' -> 'krona', 'Złoty' -> 'zloty'."""
+    text = text.translate(str.maketrans("łŁđĐ", "lLdD"))     # no accent form to strip
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+NAME_WORDS = {code: [w for w in re.findall(r"[a-z0-9]+", plain_text(name)) if w not in NAME_STOP]
+              for code, name in CURRENCY_NAMES.items()}
+
+
+def name_matches(text, known, prefix_from):
+    """Codes whose name holds the typed word as a whole word, and as a word prefix
+    (prefix only counts from prefix_from letters). A trailing plural s is ignored."""
+    low = plain_text(text)
+    forms = [low] + ([low[:-1]] if len(low) > 3 and low.endswith("s") else [])
+    whole, prefix = [], []
+    for code, words in NAME_WORDS.items():
+        if code not in known:
+            continue
+        if any(w in forms for w in words):
+            whole.append(code)
+        elif len(low) >= prefix_from and any(w.startswith(f) for w in words for f in forms):
+            prefix.append(code)
+    return whole, prefix
+
+
+def resolve_name(text, known):
+    """The one currency a word names, else None. A whole word beats a prefix of the
+    name; a prefix needs 3+ letters; PREFERRED settles shared words like "dirham"."""
+    if not (text.isascii() and text.isalpha()):
+        return None
+    whole, prefix = name_matches(text, known, 3)
+    pool = whole or prefix
+    if len(pool) > 1 and whole:
+        low = plain_text(text)
+        preferred = PREFERRED.get(low) or PREFERRED.get(low[:-1])
+        if preferred in whole:
+            return preferred
+    return pool[0] if len(pool) == 1 else None
+
+
 def word_class(text, known):
-    """How a word should be read: symbol/alias/uppercase outrank a bare code."""
+    """How a word should be read: symbol/alias/uppercase outrank a bare code, then names."""
     low = text.lower()
-    if low in MULTIPLIERS or low == "x" or low in ("to", "in", "=", "به"):
+    if low in MULTIPLIERS or low == "x" or low in CONNECTORS:
         return "plain"
     if text in SYMBOLS:
         return "symbol"
@@ -448,6 +560,8 @@ def word_class(text, known):
         return "upper"
     if upper in known:
         return "weak"
+    if resolve_name(text, known):
+        return "name"
     if len(text) == 3 and text.isascii() and text.isupper():
         return "upper-unknown"
     if len(text) == 3 and text.isascii():
@@ -514,7 +628,7 @@ def parse(q, known):
             expr.append("*")
             since_op = True
             continue
-        if low in ("to", "in", "=", "به"):
+        if low in CONNECTORS:
             continue
         wk = word_class(text, known)
         if wk == "symbol":
@@ -525,6 +639,8 @@ def parse(q, known):
             codes.append(text.upper())
         elif wk == "weak" and not strong:
             codes.append(text.upper())
+        elif wk == "name" and not strong:     # like a bare code: prose next to a symbol is ignored
+            codes.append(resolve_name(text, known))
         elif wk == "upper-unknown":
             unknown.append(text.upper())
         elif wk == "weak-unknown" and not strong:
@@ -540,6 +656,34 @@ def parse(q, known):
         except (ValueError, SyntaxError, ZeroDivisionError, OverflowError, TypeError, ArithmeticError):
             bad = joined.replace("**", "^")
     return amount, codes, unknown, shown, bad
+
+
+def pending_word(q, known):
+    """The unfinished last word as (start offset, candidate codes), or None.
+    Unfinished = a word at the very end that is no exact code, alias, symbol or single name
+    but is the start of a code or a currency name."""
+    matches = list(TOKEN.finditer(q.translate(DIGITS)))
+    if not matches:
+        return None
+    last = matches[-1]
+    text, low = last.group(), last.group().lower()
+    if last.lastgroup != "word" or q[last.end():].strip() or not text.isascii():
+        return None
+    if (low in MULTIPLIERS or low == "x" or low in CONNECTORS or text in SYMBOLS
+            or low in ALIASES or text.upper() in known or resolve_name(text, known)):
+        return None
+    if len(matches) > 1 and not any(
+            m.lastgroup in ("num", "sym") or word_class(m.group(), known) not in ("plain", "weak-unknown")
+            for m in matches[:-1]):
+        return None                       # prose with no amount or currency in front of it
+    whole, prefix = name_matches(text, known, 1)
+    group = {c: 2 for c in prefix}                       # name starts with the text
+    group.update({c: 1 for c in whole})                  # name has it as a whole word
+    group.update({c: 0 for c in known if c.lower().startswith(low)})   # code starts with it
+    used = set(parse(q[:last.start()], known)[1])
+    pool = [c for c in group if c not in used] or list(group)
+    pool.sort(key=lambda c: (group[c], POPULAR.index(c) if c in POPULAR else len(POPULAR), c))
+    return (last.start(), pool[:MAX_CANDIDATES]) if pool else None
 
 
 # ---------- output ----------
@@ -594,9 +738,22 @@ def main():
     if bad:
         emit([{"title": f"Invalid expression: {q}", "valid": False}])
         return
+    pending = pending_word(q, known)
+    if pending:
+        start, found = pending
+        rows = []
+        for code in found:
+            row = {"title": f"{code} — {CURRENCY_NAMES.get(code, code)}", "valid": False,
+                   "subtitle": f"Tab to use {code}", "autocomplete": f"{q[:start]}{code} "}
+            ic = icon(code, known)
+            if ic:
+                row["icon"] = ic
+            rows.append(row)
+        emit(rows)
+        return
     if unknown and not codes:
         emit([{"title": f"Unknown currency: {', '.join(unknown)}", "valid": False,
-               "subtitle": "Use 3-letter codes: USD EUR TRY GBP AED … or toman, emami, gram"}])
+               "subtitle": "Use 3-letter codes: USD EUR TRY GBP AED … names like yen, or toman, emami, gram"}])
         return
     src = codes[0] if codes else "USD"
     targets = [c for c in dict.fromkeys(codes[1:]) if c != src and c in known]
@@ -636,6 +793,8 @@ def main():
         return data["rates"]["USD"] / W[c] if cross and c in W else None
 
     sname = LABEL.get(src, src)
+    full = CURRENCY_NAMES.get(src, "")
+    sfull = f"{sname} ({full})" if full and sname == src else sname   # Toman, coins: label is the name
     all_codes = known
     items = []
     for tgt in targets:
@@ -689,7 +848,7 @@ def main():
         rate_part = "" if amount == 1 else f"{rate}  ·  "
         item = {
             "title": f"{fmt(value, tgt)} {name}{change}",
-            "subtitle": f"{lhs}{fmt_amount(amount, src)} {sname} = {fmt(value, tgt)} {name}  ·  {rate_part}{note}",
+            "subtitle": f"{lhs}{fmt_amount(amount, src)} {sfull} = {fmt(value, tgt)} {name}  ·  {rate_part}{note}",
             "arg": plain,
             "text": {"copy": plain, "largetype": f"{fmt_amount(amount, src)} {sname}\n= {fmt(value, tgt)} {name}"},
             "mods": {"cmd": {"arg": plain, "subtitle": "Paste the number into the front app"}},
