@@ -1,0 +1,63 @@
+#!/usr/bin/python3
+"""Currency panel backend (Alfred 6, Alfred UI).
+
+argv: mode, text, [arg, paste, ac, valid] of the selected card
+  list / launch  run currency.py (the engine the old Script Filter used) and show its rows as cards
+  act / paste    ↩ / ⌘↩ on a card: finish with it, or complete the box when the card is a suggestion
+  tab            complete the box with the selected card's suggestion
+"""
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+WF = os.path.dirname(HERE)
+
+
+def rows(text):
+    try:
+        r = subprocess.run(["/usr/bin/python3", "-I", os.path.join(WF, "currency.py"), text],
+                           capture_output=True, timeout=12, cwd=WF)
+        items = json.loads(r.stdout.decode("utf-8"))["items"]
+    except Exception as exc:  # never break the panel
+        items = [{"title": "Something went wrong", "subtitle": "%s: %s" % (type(exc).__name__, exc), "valid": False}]
+    out = []
+    for it in items:
+        valid = it.get("valid", True) and "arg" in it
+        paste = ((it.get("mods") or {}).get("cmd") or {}).get("arg") or it.get("title", "")
+        out.append({"title.text": it.get("title", ""), "sub.text": it.get("subtitle", ""),
+                    "title.colour": "labelColor" if valid else "secondaryLabelColor",
+                    "arg": str(it.get("arg", "")), "paste": str(paste), "ac": it.get("autocomplete", "") or "",
+                    "valid": "1" if valid else ""})
+    return out
+
+
+def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "list"
+    text = sys.argv[2] if len(sys.argv) > 2 else ""
+    if text == "(null)":  # what Alfred passes for an empty argument
+        text = ""
+    if mode in ("act", "paste", "tab"):
+        arg, paste, ac, valid = (sys.argv[3:7] + [""] * 4)[:4]
+        if valid and mode != "tab":
+            action = "paste" if mode == "paste" else "copy"
+            print(json.dumps({"finish": {"args": paste if action == "paste" else arg, "variables": {"action": action}}}, ensure_ascii=False))
+        elif ac:
+            ac = ac[1:] if ac.startswith("$") else ac  # the panel box has no keyword in it
+            print(json.dumps({"update": {"ids": {"in": {"text": ac}}}, "functions": {"ids": {"in": "caretend"}}}, ensure_ascii=False))
+        else:
+            print("{}")
+        return
+    with open(os.path.join(HERE, "components", "list.json")) as f:
+        view = json.load(f)
+    view["data"]["src"] = rows(text)
+    out = {"replace": {"ids": {"list": view}}}
+    if mode == "launch":
+        out["update"] = {"ids": {"in": {"text": text}}}
+        out["functions"] = {"ids": {"in": "caretend"}}
+    print(json.dumps(out, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,8 +1,10 @@
 # Currency (Toman)
 
-Alfred 5 workflow for currency, gold and coin conversion, with Iranian Toman at the free-market rate.
+Alfred 6 workflow for currency, gold and coin conversion, with Iranian Toman at the free-market rate.
 
-Type `$` and an amount. Results show as you type, with the country's flag on each row.
+> **Version 2 needs Alfred 6.** It opens a native Alfred UI panel, which Alfred 5 doesn't have. On Alfred 5, use [v1.2.0](https://github.com/aliafshany/alfred-currency-toman/releases/tag/v1.2.0).
+
+Type `$` and an amount. A panel opens with each result as a card, and it updates as you keep typing in its box.
 
 | You type | You get |
 |---|---|
@@ -14,10 +16,11 @@ Type `$` and an amount. Results show as you type, with the country's flag on eac
 | `$2 emami`, `$1 gram`, `$1 ounce irt`, `$0.01 btc` | gold coins and gold, from bonbast |
 | `$1.5k aed`, `$2m tmn` | `k` and `m` suffixes |
 | `$100 yen`, `$100 dirham`, `$100 usd as eur` | currency names work as well as codes |
-| `$100 tr`, `$100 try to e` | half-typed currency: converts with the best match at once, other matches below, ⇥ completes |
+| `$100 tr`, `$100 try to e` | half-typed currency: converts with the best match at once, other matches below as cards |
 | `$100 turkiye`, `$50 oman`, `$100 dubai` | country names |
 
-- ↩ copies the number. ⌘↩ pastes it into the front app.
+- ↩ copies the selected card's number. ⌘↩ pastes it with the currency into the front app. ↑↓ move between cards.
+- On a suggestion card, ↩ puts that currency into the box.
 - `irt`, `toman`, `tmn` mean Toman; `irr`, `rial` mean Rial. `tl`, `lira`, `dollar`, `euro`, `pound`, `dirham` work as names.
 - Gold and coins: `emami`, `azadi`, `half`, `quarter`, `gerami`, `gram` (18k), `mithqal`, `ounce`, `btc`. For these a lone `.` is a decimal point: `$1.250 gram` is 1.25 grams.
 - Symbols: `₺ $ € £ ¥ ₽ ﷼ ₹ ₩ ₪ ฿ ₼`, plus `Rs` (INR) and `kr` (SEK). Words: `ruble`/`rouble` (RUB), `kronor` (SEK), `krone` (NOK), `riyal` (SAR). `$5 million toman`, `$1e10 try` (scientific notation) and `$05 try` work; amounts above 10^15 and expressions longer than 200 characters get a clear message instead of a result.
@@ -31,9 +34,9 @@ Words shared by several currencies go to the usual one: `dirham` is AED, `dollar
 
 Country names work too, in English and Persian: `turkey`, `turkiye`, `türkiye`, `iran`, `uae`, `dubai`, `oman`, `iraq`, `uk`, `japan`, `ترکیه`, `امارات`, `عمان` and about 40 more. `us` is left out because it is an ordinary English word.
 
-When the last word is unfinished or shared, the conversion uses the best match straight away (codes first, then popular currencies), and the other matches follow as `CODE — Name` rows (up to 15). ⇥ completes the code in the case you typed:
+When the last word is unfinished or shared, the conversion uses the best match straight away (codes first, then popular currencies), and the other matches follow as `CODE — Name` suggestion cards (up to 15). ↩ on one completes the code in the case you typed:
 
-- `$100 tr` converts TRY. TTD is listed below it. ⇥ gives `$100 try `.
+- `$100 tr` converts TRY. TTD is listed below it as a suggestion card.
 - `$100 try to e` converts to EUR. EGP, EMAMI, ERN and more are listed below.
 - `$100 dinar` converts IQD (the usual dinar). Other dinars are listed if you type part of a name: `$100 dina`.
 
@@ -72,7 +75,7 @@ Toman, gold and coin rows show ▲ or ▼ with the change in price. When the wor
    pipx install bonbast
    ```
    The workflow looks for it in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`, or at the path you set in the workflow settings. Without it, every other currency still works.
-3. Optional: flags are drawn with the system emoji font through `swift`, which comes with the Xcode Command Line Tools (`xcode-select --install`). Without it, rows use the workflow icon.
+3. The v1 rows showed flags drawn through `swift`. The v2 panel's cards are text only, so that step is no longer needed.
 
 ## Settings
 
@@ -103,7 +106,7 @@ The workflow only downloads exchange rates. It sends nothing about you or your q
 
 ## Requirements
 
-Alfred 5 with the Powerpack, macOS with `/usr/bin/python3` (Xcode Command Line Tools).
+Alfred 6 with the Powerpack, macOS with `/usr/bin/python3` (Xcode Command Line Tools).
 
 ## Development
 

@@ -1,0 +1,59 @@
+{
+ "constraints": {
+  "region": "centre"
+ },
+ "id": "list",
+ "type": "dataview",
+ "behaviour": {
+  "selection": {
+   "wrap": "vertical"
+  }
+ },
+ "cell": {
+  "height": 88,
+  "init": {
+   "rowcell.background": "#8080801A",
+   "sub.colour": "secondaryLabelColor"
+  },
+  "selected": {
+   "rowcell.background": "alfredSelectedResultBackgroundColor",
+   "title.colour": "alfredSelectedResultTextColor",
+   "sub.colour": "alfredSelectedResultTextColor"
+  },
+  "root": {
+   "id": "rowcell",
+   "type": "view",
+   "layout": "inline",
+   "direction": "vertical",
+   "padding": 10,
+   "spacing": 2,
+   "cornerradius": 10,
+   "components": [
+    {
+     "id": "title",
+     "type": "label",
+     "font": {
+      "size": 22,
+      "weight": "semibold",
+      "monospaced": "digits"
+     },
+     "linebreak": "truncatetail"
+    },
+    {
+     "id": "sub",
+     "type": "label",
+     "font": {
+      "size": 11
+     },
+     "linebreak": "wordwrap"
+    }
+   ]
+  }
+ },
+ "data": {
+  "type": "basic",
+  "src": []
+ },
+ "cols": 2,
+ "spacing": 8
+}
